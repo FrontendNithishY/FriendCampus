@@ -7,6 +7,11 @@ const sb=ready?supabase.createClient(CONFIG.SUPABASE_URL,CONFIG.SUPABASE_ANON_KE
 
 /* extra icons */
 Object.assign(I,{
+ heart:'<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 21s-8-5.200-8-11a4.500 4.500 0 018-2.800A4.500 4.500 0 0120 10c0 5.800-8 11-8 11z"/></svg>',
+ cmt:'<svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 4h16v12H9l-5 4z"/></svg>',
+ share2:'<svg width="22" height="22" viewBox="0 0 24 24"><path d="M14 4l8 7-8 7v-4c-6 0-9 2-11 6 0-7 3-12 11-12z"/></svg>',
+ pin:'<svg width="22" height="22" viewBox="0 0 24 24"><path d="M9 3h6l-1 6 3 3H7l3-3zM12 12v9"/></svg>',
+ photo:'<svg width="22" height="22" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/></svg>',
  user2:'<svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-5 5-6 8-6s7 1 8 6"/></svg>',
  lock:'<svg width="22" height="22" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>',
  trash:'<svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6"/></svg>',
@@ -20,7 +25,7 @@ Object.assign(I,{
  logo:'<svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#F44336" stroke-width="1.6"><circle cx="8.500" cy="8" r="3"/><circle cx="16" cy="9" r="2.500"/><path d="M2.500 19c.5-3.500 3-5 6-5s5.500 1.500 6 5M15 14c3 0 5 1.300 5.500 4.500"/></svg>'
 });
 
-const state={notices:[],reminders:[],requests:[],notifs:[],members:[],polls:[],votes:[]};
+const state={notices:[],reminders:[],requests:[],notifs:[],members:[],polls:[],votes:[],likes:[],comments:[]};
 let me=null,tab='feed',commSeg='members',helpFilter='all',q='',chan=null;
 const isAdmin=()=>me&&me.role==='admin';
 
@@ -118,26 +123,29 @@ async function logout(){closeDrawer();if(chan)sb.removeChannel(chan);chan=null;a
 
 /* ================= DATA ================= */
 const Q={
- notices:()=>sb.from('notices').select('*').order('created_at',{ascending:false}),
+ notices:()=>sb.from('notices').select('*').order('pinned',{ascending:false}).order('created_at',{ascending:false}),
  reminders:()=>sb.from('reminders').select('*').order('remind_at',{ascending:true}),
  requests:()=>sb.from('requests').select('*').order('created_at',{ascending:false}),
  notifs:()=>sb.from('notifications').select('*').order('created_at',{ascending:false}).limit(60),
  members:()=>sb.from('profiles').select('*').order('name'),
  polls:()=>sb.from('polls').select('*').order('created_at',{ascending:false}),
- votes:()=>sb.from('votes').select('*')
+ votes:()=>sb.from('votes').select('*'),
+ likes:()=>sb.from('notice_likes').select('*'),
+ comments:()=>sb.from('notice_comments').select('*').order('created_at',{ascending:true})
 };
 async function ld(k){const {data,error}=await Q[k]();if(!error){state[k]=data||[];if(k==='members'){const m=state.members.find(x=>x.id===me.id);if(m)me=m}refresh(k)}}
 function refresh(k){
- const map={notices:'feed',reminders:'rem',requests:'help',members:'comm',polls:'comm',votes:'comm'};
+ const map={notices:'feed',reminders:'rem',requests:'help',members:'comm',polls:'comm',votes:'comm',likes:'feed',comments:'feed'};
+ if(k==='comments')drawComments();
  if(k==='notifs'){bar();if($('#notif').classList.contains('on'))openNotif();return}
  if(map[k]===tab)render();
 }
 const unseen=()=>{const s=store.get('seen',0);return state.notifs.filter(n=>n.id>s).length};
 function subscribe(){
  chan=sb.channel('fc');
- ['notices','reminders','requests','notifications','polls','votes','profiles'].forEach(t=>{
+ ['notices','reminders','requests','notifications','polls','votes','profiles','notice_likes','notice_comments'].forEach(t=>{
   chan.on('postgres_changes',{event:'*',schema:'public',table:t},p=>{
-   const key=t==='notifications'?'notifs':t==='profiles'?'members':t;
+   const key={notifications:'notifs',profiles:'members',notice_likes:'likes',notice_comments:'comments'}[t]||t;
    ld(key);
    if(t==='notifications'&&p.eventType==='INSERT'&&p.new.actor_id!==me.id){toast('🔔 '+p.new.title,3500);vib()}
   });
@@ -170,7 +178,7 @@ function nav(){
  document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>go(b.dataset.k));
 }
 function fabShow(){
- const on=(tab==='feed'&&isAdmin())||(tab==='comm'&&isAdmin()&&commSeg==='polls')||(tab==='help'&&!isAdmin())||tab==='rem';
+ const on=tab==='feed'||(tab==='comm'&&isAdmin()&&commSeg==='polls')||(tab==='help'&&!isAdmin())||tab==='rem';
  $('#fab').classList.toggle('on',on);
 }
 function go(k){
@@ -183,15 +191,20 @@ function render(){({feed:renderFeed,comm:renderComm,help:renderHelp,rem:renderRe
 function renderFeed(){
  const L=state.notices.filter(n=>(n.title+n.body).toLowerCase().includes(q.toLowerCase()));
  $('#p-feed').innerHTML=L.length?L.map(n=>{
-  const long=n.body.length>200;
+  const long=n.body.length>200,lk=state.likes.filter(x=>x.notice_id===n.id),liked=lk.some(x=>x.user_id===me.id),cc=state.comments.filter(x=>x.notice_id===n.id).length,mine=n.author_id===me.id;
   return `<div class="post"><div class="ph"><div class="pic">${I.clip}</div>
-  <div class="who"><div class="src">FriendCampus</div><div class="dt">${dshort(n.created_at)}</div></div>
-  ${isAdmin()?`<button class="xbtn" data-act="delnotice" data-id="${n.id}">${I.trash}</button>`:I.chev}</div>
-  <h3>${esc(n.title)}</h3><div class="body">${esc(long?n.body.slice(0,200)+'....':n.body)}</div>
+  <div class="who"><div class="src">${esc(n.author_name||'Admin')}${n.author_role==='admin'?'<span class="tag admin">ADMIN</span>':''}${n.pinned?'<span class="tag glob">PINNED</span>':''}</div><div class="dt">${dshort(n.created_at)}</div></div>
+  ${isAdmin()?`<button class="xbtn" data-act="pin" data-id="${n.id}">${I.pin}</button>`:''}
+  ${(isAdmin()||mine)?`<button class="xbtn" data-act="delnotice" data-id="${n.id}">${I.trash}</button>`:(isAdmin()?'':I.chev)}</div>
+  <h3>${esc(n.title)}</h3>
+  ${n.image_url?`<div class="nimg"><img src="${esc(n.image_url)}" loading="lazy" data-act="img" data-id="${n.id}"></div>`:''}
+  <div class="body">${esc(long?n.body.slice(0,200)+'....':n.body)}</div>
   ${long?`<a class="vm" data-act="viewnotice" data-id="${n.id}">View more</a>`:'<div style="height:16px"></div>'}
   <div class="by">Posted by <span>${esc(n.author_name||'Admin')}</span></div>
-  <div class="share" data-act="share" data-id="${n.id}">${I.share}<span>Share</span></div></div>`}).join(''):
-  `<div class="empty">${q?'No notices match your search.':'No notices yet.'}${isAdmin()&&!q?' Tap + to post one.':''}</div>`;
+  <div class="acts"><button data-act="like" data-id="${n.id}" class="${liked?'liked':''}">${I.heart}<span>${lk.length||''} Like</span></button>
+  <button data-act="comments" data-id="${n.id}">${I.cmt}<span>${cc||''} Comment</span></button>
+  <button data-act="share" data-id="${n.id}">${I.share2}<span>Share</span></button></div></div>`}).join(''):
+  `<div class="empty">${q?'No notices match your search.':'No notices yet. Tap + to post one.'}</div>`;
 }
 $('#sq').oninput=e=>{q=e.target.value;renderFeed()};
 
@@ -276,10 +289,38 @@ $('#scrim').onclick=closeDrawer;
 /* ================= ACTIONS ================= */
 const mrow=(c,s)=>`<div class="row"><button id="mc">CANCEL</button><button id="ms">${s}</button></div>`;
 function pickErr(error){if(error)toast('Error: '+error.message,3500);return !!error}
-function newNotice(){modal(`<h3>Post a notice</h3><input id="a1" placeholder="Title"><textarea id="a2" rows="6" placeholder="Write the notice…"></textarea>${mrow(0,'POST')}`);
- $('#mc').onclick=closeModal;$('#ms').onclick=async()=>{const t=$('#a1').value.trim();if(!t)return;
-  const {error}=await sb.from('notices').insert({title:t,body:$('#a2').value.trim(),author_id:me.id,author_name:me.name});
-  if(!pickErr(error)){closeModal();toast('Notice posted to everyone');ld('notices')}}}
+let picked=null;
+function compress(file,max=1280){return new Promise((res,rej)=>{const img=new Image(),u=URL.createObjectURL(file);
+ img.onload=()=>{const r=Math.min(1,max/Math.max(img.width,img.height)),w=Math.round(img.width*r),h=Math.round(img.height*r),c=document.createElement('canvas');
+  c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);c.toBlob(b=>b?res(b):rej(new Error('Could not read image')),'image/jpeg',.8);URL.revokeObjectURL(u)};
+ img.onerror=()=>rej(new Error('Could not read image'));img.src=u})}
+function newNotice(){picked=null;
+ modal(`<h3>Post a notice</h3><input id="a1" placeholder="Title"><textarea id="a2" rows="5" placeholder="Write something…"></textarea>
+ <div id="pv" style="display:none;margin-bottom:12px;position:relative"><img id="pvi" style="width:100%;border-radius:8px"><button id="pvx" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:32px;height:32px;padding:0">✕</button></div>
+ <input id="a3" type="file" accept="image/*" style="display:none">
+ <button id="ap" style="width:100%;border:1.5px solid var(--red);border-radius:8px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:8px"><span style="display:flex;stroke:var(--red);fill:none;stroke-width:1.6">${I.photo}</span>Add photo</button>${mrow(0,'POST')}`);
+ $('#ap').onclick=()=>$('#a3').click();
+ $('#a3').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{picked=await compress(f);$('#pvi').src=URL.createObjectURL(picked);$('#pv').style.display='block'}catch(x){toast(x.message)}};
+ $('#pvx').onclick=()=>{picked=null;$('#pv').style.display='none';$('#a3').value=''};
+ $('#mc').onclick=closeModal;
+ $('#ms').onclick=async()=>{const t=$('#a1').value.trim();if(!t)return toast('Add a title');
+  const b=$('#ms');b.disabled=true;b.textContent='POSTING…';let url=null;
+  if(picked){const path=`${me.id}/${Date.now()}.jpg`;
+   const {error:ue}=await sb.storage.from('notice-images').upload(path,picked,{contentType:'image/jpeg'});
+   if(ue){b.disabled=false;b.textContent='POST';return toast('Photo upload failed: '+ue.message,3500)}
+   url=sb.storage.from('notice-images').getPublicUrl(path).data.publicUrl}
+  const {error}=await sb.from('notices').insert({title:t,body:$('#a2').value.trim(),image_url:url,author_id:me.id,author_name:me.name});
+  if(error){b.disabled=false;b.textContent='POST';return pickErr(error)}
+  closeModal();toast('Notice posted');ld('notices')}}
+let cmNotice=null;
+function openComments(id){cmNotice=id;
+ modal(`<h3>Comments</h3><div id="cml" style="max-height:45vh;overflow-y:auto"></div><div style="display:flex;gap:8px;margin-top:12px"><input id="cmi" placeholder="Write a comment…" style="margin:0;flex:1"><button id="cms" style="background:var(--red);color:#fff;border-radius:6px">Send</button></div><div class="row" style="margin-top:8px"><button id="mc">CLOSE</button></div>`);
+ $('#mc').onclick=()=>{cmNotice=null;closeModal()};$('#cms').onclick=sendComment;$('#cmi').onkeydown=e=>{if(e.key==='Enter')sendComment()};drawComments()}
+function drawComments(){const el=$('#cml');if(!el||cmNotice==null)return;const L=state.comments.filter(c=>c.notice_id===cmNotice);
+ el.innerHTML=L.length?L.map(c=>`<div style="padding:8px 0;border-bottom:1px solid #eee"><b style="font-size:14px">${esc(c.author_name)}</b> <span style="color:#999;font-size:12px">${fmt(c.created_at)}</span>${(isAdmin()||c.user_id===me.id)?`<button class="xbtn" data-act="delcm" data-id="${c.id}" style="float:right;padding:0">${I.trash}</button>`:''}<div style="font-size:15px;margin-top:2px;white-space:pre-wrap">${esc(c.body)}</div></div>`).join(''):'<div style="color:#888;padding:10px 0">No comments yet. Be the first!</div>';el.scrollTop=el.scrollHeight}
+async function sendComment(){const v=$('#cmi').value.trim();if(!v)return;
+ const {error}=await sb.from('notice_comments').insert({notice_id:cmNotice,user_id:me.id,author_name:me.name,body:v});
+ if(!pickErr(error)){$('#cmi').value='';ld('comments')}}
 function newReminder(forceGlobal){
  modal(`<h3>New reminder</h3><input id="a1" placeholder="What to remember?"><input id="a3" placeholder="Note (optional)"><input id="a2" type="datetime-local">
  ${isAdmin()?`<select id="a4"><option value="global" ${forceGlobal?'selected':''}>Send to everyone</option><option value="personal" ${forceGlobal?'':'selected'}>Only me</option></select>`:''}${mrow(0,'SAVE')}`);
@@ -307,7 +348,14 @@ function idCard(){modal(`<h3>My ID</h3><div style="text-align:center;padding:10p
 
 document.addEventListener('click',async e=>{
  const t=e.target.closest('[data-act]');if(!t)return;const id=t.dataset.id,a=t.dataset.act;
- if(a==='delnotice'){if(confirm('Delete this notice?')){const {error}=await sb.from('notices').delete().eq('id',id);pickErr(error);ld('notices')}}
+ if(a==='delnotice'){if(confirm('Delete this notice?')){const n=state.notices.find(x=>x.id==id);const {error}=await sb.from('notices').delete().eq('id',id);
+  if(!pickErr(error)&&n&&n.image_url){const m=n.image_url.split('/notice-images/')[1];if(m)sb.storage.from('notice-images').remove([decodeURIComponent(m)])}ld('notices')}}
+ else if(a==='pin'){const n=state.notices.find(x=>x.id==id);const {error}=await sb.from('notices').update({pinned:!n.pinned}).eq('id',id);pickErr(error);ld('notices')}
+ else if(a==='like'){const liked=state.likes.some(x=>x.notice_id==id&&x.user_id===me.id);
+  const r=liked?await sb.from('notice_likes').delete().eq('notice_id',id).eq('user_id',me.id):await sb.from('notice_likes').insert({notice_id:+id,user_id:me.id});pickErr(r.error);ld('likes')}
+ else if(a==='comments'){openComments(+id)}
+ else if(a==='delcm'){const {error}=await sb.from('notice_comments').delete().eq('id',id);pickErr(error);ld('comments')}
+ else if(a==='img'){const n=state.notices.find(x=>x.id==id);modal(`<img src="${esc(n.image_url)}" style="width:100%;border-radius:6px"><div class="row" style="margin-top:10px"><button id="mc">CLOSE</button></div>`);$('#mc').onclick=closeModal}
  else if(a==='viewnotice'){const n=state.notices.find(x=>x.id==id);modal(`<h3>${esc(n.title)}</h3><div style="white-space:pre-wrap;font-size:15px;line-height:1.6;margin-bottom:12px">${esc(n.body)}</div><div style="color:#888;font-size:13px">Posted by ${esc(n.author_name||'Admin')} · ${fmt(n.created_at)}</div><div class="row"><button id="mc">CLOSE</button></div>`);$('#mc').onclick=closeModal}
  else if(a==='share'){const n=state.notices.find(x=>x.id==id);if(navigator.share)navigator.share({title:n.title,text:n.title+'\n\n'+n.body}).catch(()=>{});else toast('Sharing not available')}
  else if(a==='seg'){commSeg=id;render()}
