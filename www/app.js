@@ -44,40 +44,85 @@ function dshort(ts){const d=new Date(ts);return d.getDate()+' '+d.toLocaleString
 function dfull(ts){return new Date(ts).toLocaleString('en',{weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit'})}
 
 /* ================= LOGIN ================= */
-let signup=false;
+let signup=false,pendingEmail='',coolTimer=null;
+const IC_MAIL='<svg width="22" height="22" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>';
+const IC_KEY='<svg width="22" height="22" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>';
+function loginTop(){return `<div class="lg-top"><div class="lg-logo">${I.logo}</div><h1>FriendCampus</h1><p>Notices, reminders &amp; your friends in one place</p></div>`}
 function showLogin(msg=''){
  $('#login').classList.add('on');
- $('#login').innerHTML=`<div class="lg-top"><div class="lg-logo">${I.logo}</div><h1>FriendCampus</h1><p>Notices, reminders &amp; your friends in one place</p></div>
- <div class="lg-card"><h2>${signup?'Create account':'Login'}</h2>
- <div class="lg-warn" id="lw" style="display:${ready?'none':'block'}">Supabase is not set up yet. Put your project URL and anon key in <b>www/config.js</b> and rebuild.</div>
- ${signup?`<div class="fld">${I.user2}<input id="l_name" placeholder="Full name" autocomplete="name"></div>`:''}
- <div class="fld">${I.user2}<input id="l_user" placeholder="Username" autocapitalize="none" autocomplete="username"></div>
- <div class="fld">${I.lock}<input id="l_pass" type="password" placeholder="Password" autocomplete="current-password"></div>
+ $('#login').innerHTML=loginTop()+`<div class="lg-card"><h2>${signup?'Create account':'Login'}</h2>
+ <div class="lg-warn" style="display:${ready?'none':'block'}">Supabase is not set up yet. Put your project URL and anon key in <b>www/config.js</b> and rebuild.</div>
+ ${signup?`<div class="fld">${I.user2}<input id="l_name" placeholder="Full name" autocomplete="name"></div>
+ <div class="fld">${I.user2}<input id="l_user" placeholder="Choose a username" autocapitalize="none" autocomplete="username"></div>
+ <div class="fld">${IC_MAIL}<input id="l_email" type="email" placeholder="Email address" autocapitalize="none" autocomplete="email"></div>`
+ :`<div class="fld">${I.user2}<input id="l_user" placeholder="Username or email" autocapitalize="none" autocomplete="username"></div>`}
+ <div class="fld">${I.lock}<input id="l_pass" type="password" placeholder="Password${signup?' (min 6)':''}" autocomplete="${signup?'new-password':'current-password'}"></div>
  <div class="lg-err" id="l_err">${esc(msg)}</div>
- <button class="btn" id="l_go">${signup?'Sign up':'Login'}</button>
+ <button class="btn" id="l_go">${signup?'Send verification code':'Login'}</button>
  <div class="lg-sw">${signup?'Already have an account?':'New here?'} <a id="l_sw">${signup?'Login':'Create account'}</a></div></div>`;
  $('#l_sw').onclick=()=>{signup=!signup;showLogin()};
  $('#l_go').onclick=doAuth;
  $('#l_pass').onkeydown=e=>{if(e.key==='Enter')doAuth()};
 }
+function showVerify(email,msg=''){
+ pendingEmail=email;$('#login').classList.add('on');
+ $('#login').innerHTML=loginTop()+`<div class="lg-card"><h2>Verify your email</h2>
+ <p style="margin:0 0 16px;color:#555;font-size:15px;line-height:1.4">We sent a verification code to <b>${esc(email)}</b>. Enter it below.</p>
+ <div class="fld">${IC_KEY}<input id="v_code" inputmode="numeric" maxlength="8" placeholder="Verification code" autocomplete="one-time-code" style="letter-spacing:4px;font-size:20px;font-weight:600"></div>
+ <div class="lg-err" id="v_err">${esc(msg)}</div>
+ <button class="btn" id="v_go">Verify &amp; continue</button>
+ <div class="lg-sw"><a id="v_re">Resend code</a><span id="v_cd"></span><br><br><a id="v_back">Back to login</a></div></div>`;
+ $('#v_go').onclick=doVerify;$('#v_code').onkeydown=e=>{if(e.key==='Enter')doVerify()};
+ $('#v_back').onclick=()=>{signup=false;showLogin()};
+ $('#v_re').onclick=resend;
+ cooldown(30);
+}
+function cooldown(n){clearInterval(coolTimer);const a=$('#v_re'),c=$('#v_cd');if(!a)return;let s=n;
+ a.style.pointerEvents='none';a.style.opacity='.5';
+ coolTimer=setInterval(()=>{s--;if(!$('#v_cd')){clearInterval(coolTimer);return}
+  if(s<=0){clearInterval(coolTimer);$('#v_cd').textContent='';a.style.pointerEvents='';a.style.opacity=''}else $('#v_cd').textContent=' ('+s+'s)'},1000)}
+async function resend(){
+ const {error}=await sb.auth.resend({type:'signup',email:pendingEmail});
+ if(error){$('#v_err').textContent=error.message;return}
+ $('#v_err').style.color='#2E7D32';$('#v_err').textContent='New code sent.';cooldown(30);
+}
+async function doVerify(){
+ const code=$('#v_code').value.trim(),err=$('#v_err');err.style.color='';
+ if(code.length<6)return err.textContent='Enter the code from your email.';
+ const b=$('#v_go');b.disabled=true;err.textContent='';
+ const {error}=await sb.auth.verifyOtp({email:pendingEmail,token:code,type:'signup'});
+ if(error){err.textContent=/expired|invalid/i.test(error.message)?'Wrong or expired code. Try again or resend.':error.message;b.disabled=false}
+ /* success -> onAuthStateChange SIGNED_IN starts the app */
+}
 async function doAuth(){
  const err=m=>{$('#l_err').textContent=m};
  if(!ready)return err('Add your Supabase keys in config.js first.');
- const u=$('#l_user').value.trim().toLowerCase(),p=$('#l_pass').value;
- if(!/^[a-z0-9_.]{3,20}$/.test(u))return err('Username: 3-20 letters, numbers, _ or .');
+ const p=$('#l_pass').value;let u=$('#l_user').value.trim().toLowerCase();
+ if(!u)return err(signup?'Choose a username.':'Enter your username or email.');
  if(p.length<6)return err('Password must be at least 6 characters.');
  const b=$('#l_go');b.disabled=true;err('');
  try{
   if(signup){
-   const name=$('#l_name').value.trim()||u;
-   const {data,error}=await sb.auth.signUp({email:u+DOM,password:p,options:{data:{name}}});
+   const name=$('#l_name').value.trim()||u,email=$('#l_email').value.trim().toLowerCase();
+   if(!/^[a-z0-9_.]{3,20}$/.test(u))throw new Error('Username: 3-20 letters, numbers, _ or .');
+   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))throw new Error('Enter a valid email address.');
+   const {data:taken}=await sb.rpc('username_taken',{u});
+   if(taken)throw new Error('That username is already taken.');
+   const {data,error}=await sb.auth.signUp({email,password:p,options:{data:{name,username:u}}});
    if(error)throw error;
-   if(!data.session){signup=false;showLogin('Account created. Turn off "Confirm email" in Supabase, then login.');return}
-  }else{
-   const {error}=await sb.auth.signInWithPassword({email:u+DOM,password:p});
-   if(error)throw error;
+   if(data.user&&data.user.identities&&data.user.identities.length===0)throw new Error('This email is already registered. Please login.');
+   if(data.session)return;               /* confirmation disabled: already signed in */
+   showVerify(email);return;
   }
- }catch(e){err(/Invalid login/i.test(e.message)?'Wrong username or password.':e.message);b.disabled=false}
+  let email=u;
+  if(!u.includes('@')){const {data}=await sb.rpc('email_for_username',{u});email=data||'';}
+  if(!email)throw new Error('Wrong username or password.');
+  const {error}=await sb.auth.signInWithPassword({email,password:p});
+  if(error){
+   if(/not confirmed/i.test(error.message)){await sb.auth.resend({type:'signup',email});showVerify(email,'Please verify your email first. A new code was sent.');return}
+   throw new Error(/Invalid login/i.test(error.message)?'Wrong username or password.':error.message);
+  }
+ }catch(e){err(e.message);b.disabled=false}
 }
 async function logout(){closeDrawer();if(chan)sb.removeChannel(chan);chan=null;await sb.auth.signOut();me=null}
 

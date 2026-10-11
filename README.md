@@ -4,8 +4,8 @@ Capacitor app with a Supabase backend: login, admin-posted notices, reminders, p
 
 ## 1. Set up Supabase (5 minutes, free)
 1. Go to supabase.com → **New project**.
-2. **Authentication → Providers → Email**: turn **OFF "Confirm email"** (users sign up with a username, not a real email).
-3. **SQL Editor** → paste all of `supabase.sql` → **Run**. This creates the tables, security rules, live updates and the admin account.
+2. **Authentication → Providers → Email**: keep **"Confirm email" ON**. Then edit **Authentication → Emails → Confirm sign up** so the email body contains the code: `<h2>Your FriendCampus code</h2><p>{{ .Token }}</p>`.
+3. **SQL Editor** → run `supabase.sql`, then run `supabase_update_email.sql`. This creates the tables, security rules, live updates and the admin account.
 4. **Project Settings → API**: copy the **Project URL** and the **anon public** key into `www/config.js`.
 
 Admin login: username `Admin`, password `nathaadmin` (change it in the app: menu → Change Password).
