@@ -58,7 +58,7 @@ function showLogin(msg=''){
  :`<div class="fld">${I.user2}<input id="l_user" placeholder="Username or email" autocapitalize="none" autocomplete="username"></div>`}
  <div class="fld">${I.lock}<input id="l_pass" type="password" placeholder="Password${signup?' (min 6)':''}" autocomplete="${signup?'new-password':'current-password'}"></div>
  <div class="lg-err" id="l_err">${esc(msg)}</div>
- <button class="btn" id="l_go">${signup?'Send verification code':'Login'}</button>
+ <button class="btn" id="l_go">${signup?'Create account':'Login'}</button>
  <div class="lg-sw">${signup?'Already have an account?':'New here?'} <a id="l_sw">${signup?'Login':'Create account'}</a></div></div>`;
  $('#l_sw').onclick=()=>{signup=!signup;showLogin()};
  $('#l_go').onclick=doAuth;
@@ -66,33 +66,23 @@ function showLogin(msg=''){
 }
 function showVerify(email,msg=''){
  pendingEmail=email;$('#login').classList.add('on');
- $('#login').innerHTML=loginTop()+`<div class="lg-card"><h2>Verify your email</h2>
- <p style="margin:0 0 16px;color:#555;font-size:15px;line-height:1.4">We sent a verification code to <b>${esc(email)}</b>. Enter it below.</p>
- <div class="fld">${IC_KEY}<input id="v_code" inputmode="numeric" maxlength="8" placeholder="Verification code" autocomplete="one-time-code" style="letter-spacing:4px;font-size:20px;font-weight:600"></div>
+ $('#login').innerHTML=loginTop()+`<div class="lg-card"><h2>Check your email</h2>
+ <p style="margin:0 0 16px;color:#555;font-size:15px;line-height:1.5">We sent a confirmation link to <b>${esc(email)}</b>.<br>Tap the link in that email, then come back here and login.</p>
  <div class="lg-err" id="v_err">${esc(msg)}</div>
- <button class="btn" id="v_go">Verify &amp; continue</button>
- <div class="lg-sw"><a id="v_re">Resend code</a><span id="v_cd"></span><br><br><a id="v_back">Back to login</a></div></div>`;
- $('#v_go').onclick=doVerify;$('#v_code').onkeydown=e=>{if(e.key==='Enter')doVerify()};
- $('#v_back').onclick=()=>{signup=false;showLogin()};
+ <button class="btn" id="v_go">I've confirmed - Login</button>
+ <div class="lg-sw"><a id="v_re">Resend email</a><span id="v_cd"></span><br><br><span style="font-size:13px">Can't find it? Check your spam folder.</span></div></div>`;
+ $('#v_go').onclick=()=>{signup=false;showLogin()};
  $('#v_re').onclick=resend;
  cooldown(30);
 }
-function cooldown(n){clearInterval(coolTimer);const a=$('#v_re'),c=$('#v_cd');if(!a)return;let s=n;
+function cooldown(n){clearInterval(coolTimer);const a=$('#v_re');if(!a)return;let s=n;
  a.style.pointerEvents='none';a.style.opacity='.5';
  coolTimer=setInterval(()=>{s--;if(!$('#v_cd')){clearInterval(coolTimer);return}
   if(s<=0){clearInterval(coolTimer);$('#v_cd').textContent='';a.style.pointerEvents='';a.style.opacity=''}else $('#v_cd').textContent=' ('+s+'s)'},1000)}
 async function resend(){
- const {error}=await sb.auth.resend({type:'signup',email:pendingEmail});
- if(error){$('#v_err').textContent=error.message;return}
- $('#v_err').style.color='#2E7D32';$('#v_err').textContent='New code sent.';cooldown(30);
-}
-async function doVerify(){
- const code=$('#v_code').value.trim(),err=$('#v_err');err.style.color='';
- if(code.length<6)return err.textContent='Enter the code from your email.';
- const b=$('#v_go');b.disabled=true;err.textContent='';
- const {error}=await sb.auth.verifyOtp({email:pendingEmail,token:code,type:'signup'});
- if(error){err.textContent=/expired|invalid/i.test(error.message)?'Wrong or expired code. Try again or resend.':error.message;b.disabled=false}
- /* success -> onAuthStateChange SIGNED_IN starts the app */
+ const {error}=await sb.auth.resend({type:'signup',email:pendingEmail,options:{emailRedirectTo:CONFIG.REDIRECT_URL}});
+ const e=$('#v_err');if(error){e.style.color='';e.textContent=error.message;return}
+ e.style.color='#2E7D32';e.textContent='Email sent again.';cooldown(30);
 }
 async function doAuth(){
  const err=m=>{$('#l_err').textContent=m};
@@ -108,7 +98,7 @@ async function doAuth(){
    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))throw new Error('Enter a valid email address.');
    const {data:taken}=await sb.rpc('username_taken',{u});
    if(taken)throw new Error('That username is already taken.');
-   const {data,error}=await sb.auth.signUp({email,password:p,options:{data:{name,username:u}}});
+   const {data,error}=await sb.auth.signUp({email,password:p,options:{data:{name,username:u},emailRedirectTo:CONFIG.REDIRECT_URL}});
    if(error)throw error;
    if(data.user&&data.user.identities&&data.user.identities.length===0)throw new Error('This email is already registered. Please login.');
    if(data.session)return;               /* confirmation disabled: already signed in */
@@ -119,7 +109,7 @@ async function doAuth(){
   if(!email)throw new Error('Wrong username or password.');
   const {error}=await sb.auth.signInWithPassword({email,password:p});
   if(error){
-   if(/not confirmed/i.test(error.message)){await sb.auth.resend({type:'signup',email});showVerify(email,'Please verify your email first. A new code was sent.');return}
+   if(/not confirmed/i.test(error.message)){await sb.auth.resend({type:'signup',email,options:{emailRedirectTo:CONFIG.REDIRECT_URL}});showVerify(email,'Please confirm your email first. We sent the link again.');return}
    throw new Error(/Invalid login/i.test(error.message)?'Wrong username or password.':error.message);
   }
  }catch(e){err(e.message);b.disabled=false}
