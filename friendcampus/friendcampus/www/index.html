@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#F44336">
+<title>FriendCampus</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="extra.css">
+</head>
+<body>
+<div id="app">
+  <div class="bar" id="bar"></div>
+  <div class="srow" id="srow"><input id="sq" placeholder="Search notices…"></div>
+  <div id="pages">
+    <div class="page on" id="p-feed"></div>
+    <div class="page" id="p-comm"></div>
+    <div class="page" id="p-help"></div>
+    <div class="page" id="p-rem"></div>
+  </div>
+  <div class="nav" id="nav"></div>
+</div>
+<button class="fab" id="fab" aria-label="Add"><svg width="30" height="30" viewBox="0 0 24 24" stroke="#fff" stroke-width="2.6"><path d="M12 4v16M4 12h16"/></svg></button>
+<div id="notif"></div>
+<div id="scrim"></div>
+<div id="drawer"></div>
+<div id="modal"><div class="box"></div></div>
+<div id="toast"></div>
+<div id="login"></div>
+
+<script src="supabase.js"></script>
+<script src="config.js"></script>
+<script src="icons.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
